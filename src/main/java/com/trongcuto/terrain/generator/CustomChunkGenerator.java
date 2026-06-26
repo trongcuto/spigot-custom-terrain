@@ -2,132 +2,219 @@ package com.trongcuto.terrain.generator;
 
 import com.trongcuto.terrain.config.TerrainConfig;
 import com.trongcuto.terrain.noise.SimplexNoise;
+import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.World;
-import org.bukkit.block.Biome;
+import org.bukkit.generator.BiomeProvider;
+import org.bukkit.generator.BlockPopulator;
 import org.bukkit.generator.ChunkGenerator;
+import org.bukkit.generator.WorldInfo;
 
+import java.util.Collections;
+import java.util.List;
 import java.util.Random;
 
 /**
- * Custom Chunk Generator - Chunk Generator chính sử dụng Simplex Noise 3D
- * Tạo địa hình, ore, biomes, structures tất cả trong một class
+ * Custom {@link ChunkGenerator} that builds terrain from a true 3D Simplex-noise
+ * density field.
+ *
+ * <p>For every block position the generator evaluates 3D noise and subtracts a
+ * vertical "squash" gradient that pushes density negative with altitude. Where
+ * the density is positive the block is solid, otherwise it is air (or water
+ * below sea level). Because the field is fully 3D — not a single height per
+ * column — the terrain naturally produces overhangs, arches, floating crags and
+ * caves that a 2D heightmap cannot.</p>
+ *
+ * <p>Ores ({@link OreGenerator}), biomes ({@link BiomeManager}) and trees
+ * ({@link StructureGenerator}) are all layered on top of the same noise
+ * pipeline.</p>
  */
-public class CustomChunkGenerator extends ChunkGenerator {
-    private final SimplexNoise terrainNoise;
-    private final SimplexNoise caveNoise;
-    private final SimplexNoise detailNoise;
-    private final OreGenerator oreGenerator;
-    private final BiomeManager biomeManager;
-    private final StructureGenerator structureGenerator;
+public final class CustomChunkGenerator extends ChunkGenerator {
 
-    public CustomChunkGenerator(long seed) {
-        this.terrainNoise = new SimplexNoise(seed);
-        this.caveNoise = new SimplexNoise(seed + 1);
-        this.detailNoise = new SimplexNoise(seed + 2);
-        this.oreGenerator = new OreGenerator(seed);
-        this.biomeManager = new BiomeManager(seed);
-        this.structureGenerator = new StructureGenerator(seed);
+    private SimplexNoise density;
+    private SimplexNoise ridge;
+    private SimplexNoise surfaceVariation;
+    private OreGenerator oreGenerator;
+    private long initializedSeed;
+    private boolean initialized;
+
+    private synchronized void ensureInitialized(long seed) {
+        if (initialized && seed == initializedSeed) {
+            return;
+        }
+        density = new SimplexNoise(seed);
+        ridge = new SimplexNoise(seed ^ 0x9E3779B97F4A7C15L);
+        surfaceVariation = new SimplexNoise(seed * 31L + 17L);
+        oreGenerator = new OreGenerator(seed);
+        initializedSeed = seed;
+        initialized = true;
+    }
+
+    /**
+     * 3D density at a world position. Positive values are solid.
+     */
+    private double densityAt(int x, int y, int z) {
+        double base = density.octaves(
+                x * TerrainConfig.HORIZONTAL_SCALE,
+                y * TerrainConfig.VERTICAL_SCALE,
+                z * TerrainConfig.HORIZONTAL_SCALE,
+                4, 0.5, 2.0);
+
+        double ridges = ridge.ridged(
+                x * TerrainConfig.HORIZONTAL_SCALE * 0.5,
+                y * TerrainConfig.VERTICAL_SCALE * 0.5,
+                z * TerrainConfig.HORIZONTAL_SCALE * 0.5,
+                3, 0.5, 2.2);
+
+        double value = base + (ridges - 0.5) * TerrainConfig.RIDGE_WEIGHT;
+
+        // Altitude gradient gives a recognisable ground/sky split.
+        value -= (y - TerrainConfig.TERRAIN_CENTER) * TerrainConfig.SQUASH_FACTOR;
+
+        return value;
     }
 
     @Override
-    public ChunkData generateChunkData(World world, Random random, int chunkX, int chunkZ, BiomeGrid biome) {
-        ChunkData chunk = createChunkData(world);
+    public void generateNoise(WorldInfo worldInfo, Random random,
+                              int chunkX, int chunkZ, ChunkData chunkData) {
+        ensureInitialized(worldInfo.getSeed());
 
-        // Tạo heightmap cho chunk
-        int[][] heightMap = new int[16][16];
-        Biome[][] biomeMap = new Biome[16][16];
+        int minY = worldInfo.getMinHeight();
+        int maxY = worldInfo.getMaxHeight();
 
-        for (int x = 0; x < 16; x++) {
-            for (int z = 0; z < 16; z++) {
-                int worldX = chunkX * 16 + x;
-                int worldZ = chunkZ * 16 + z;
-                heightMap[x][z] = getHeight(worldX, worldZ);
-                biomeMap[x][z] = biomeManager.getBiomeAtPosition(worldX, worldZ, heightMap[x][z]);
-                biome.setBiome(x, z, biomeMap[x][z]);
-            }
-        }
+        for (int localX = 0; localX < 16; localX++) {
+            for (int localZ = 0; localZ < 16; localZ++) {
+                int worldX = (chunkX << 4) + localX;
+                int worldZ = (chunkZ << 4) + localZ;
 
-        // Điền khối vào chunk
-        for (int x = 0; x < 16; x++) {
-            for (int z = 0; z < 16; z++) {
-                int worldX = chunkX * 16 + x;
-                int worldZ = chunkZ * 16 + z;
-                int height = heightMap[x][z];
+                // Scan top-down so we always know how far below the exposed
+                // surface a solid block sits, even under 3D overhangs. The top
+                // of the world counts as open air.
+                boolean airAbove = true;
+                int depth = 0;
 
-                for (int y = 0; y < 256; y++) {
-                    Material block = getBlockMaterial(worldX, y, worldZ, height);
-                    chunk.setBlock(x, y, z, block);
+                for (int y = maxY - 1; y >= minY; y--) {
+                    boolean solid = densityAt(worldX, y, worldZ) > 0;
+
+                    if (solid) {
+                        depth = airAbove ? 0 : depth + 1;
+                        Material material = pickSolidMaterial(worldX, y, worldZ, depth);
+                        chunkData.setBlock(localX, y, localZ, material);
+                        airAbove = false;
+                    } else {
+                        if (y <= TerrainConfig.SEA_LEVEL) {
+                            chunkData.setBlock(localX, y, localZ, Material.WATER);
+                        }
+                        airAbove = true;
+                    }
                 }
-
-                // Tạo cây
-                structureGenerator.generateTree(chunkX, chunkZ, x, z, height, chunk);
             }
         }
-
-        return chunk;
     }
 
     /**
-     * Tính chiều cao terrain tại vị trí X, Z
+     * Chooses the block for a solid voxel. {@code depth} is the number of solid
+     * blocks between this voxel and the air/water directly above it (0 == the
+     * exposed surface block).
      */
-    private int getHeight(int x, int z) {
-        // Tạo terrain với multiple octaves của noise
-        double noise1 = terrainNoise.noise(x * TerrainConfig.TERRAIN_SCALE, 0, z * TerrainConfig.TERRAIN_SCALE);
-        double noise2 = terrainNoise.noise(x * TerrainConfig.TERRAIN_SCALE_2, 0, z * TerrainConfig.TERRAIN_SCALE_2) * 0.5;
-        double noise3 = detailNoise.noise(x * TerrainConfig.DETAIL_SCALE, 0, z * TerrainConfig.DETAIL_SCALE) * 0.3;
+    private Material pickSolidMaterial(int x, int y, int z, int depth) {
+        // Beach / sea bed near the water line.
+        if (depth <= TerrainConfig.DIRT_DEPTH && y <= TerrainConfig.SEA_LEVEL + 2
+                && y >= TerrainConfig.SEA_LEVEL - 4) {
+            return Material.SAND;
+        }
 
-        double combined = noise1 + noise2 + noise3;
-        int baseHeight = (int) ((combined + 1) * 32) + TerrainConfig.SEA_LEVEL;
+        if (depth == 0) {
+            if (y < TerrainConfig.SEA_LEVEL) {
+                return Material.GRAVEL;
+            }
+            double v = surfaceVariation.noise(x * 0.05, 0.0, z * 0.05);
+            return v > 0.65 ? Material.COARSE_DIRT : Material.GRASS_BLOCK;
+        }
 
-        return Math.max(TerrainConfig.MIN_HEIGHT, Math.min(TerrainConfig.MAX_HEIGHT, baseHeight));
+        if (depth <= TerrainConfig.DIRT_DEPTH) {
+            return Material.DIRT;
+        }
+
+        return stoneOrOre(x, y, z);
     }
 
-    /**
-     * Xác định loại khối tại vị trí
-     */
-    private Material getBlockMaterial(int x, int y, int z, int terrainHeight) {
-        // Hang động
-        if (y >= TerrainConfig.MIN_CAVE_HEIGHT && y <= TerrainConfig.MAX_CAVE_HEIGHT) {
-            double caveNoise = Math.abs(this.caveNoise.noise(x * TerrainConfig.CAVE_SCALE, y * 0.05, z * TerrainConfig.CAVE_SCALE));
-            if (caveNoise < TerrainConfig.CAVE_THRESHOLD || structureGenerator.isCavern(x, y, z)) {
-                return Material.CAVE_AIR;
-            }
-        }
-
-        // Trên mặt đất
-        if (y >= terrainHeight) {
-            if (y == terrainHeight) {
-                return Material.GRASS_BLOCK;
-            } else if (y < TerrainConfig.SEA_LEVEL) {
-                return Material.WATER;
-            } else {
-                return Material.AIR;
-            }
-        }
-
-        // Dưới mặt đất
-        Material baseBlock;
-        if (y > terrainHeight - 4) {
-            baseBlock = Material.DIRT;
-        } else if (y > terrainHeight - 10) {
-            baseBlock = Material.STONE;
-        } else if (y > 10) {
-            baseBlock = Material.STONE;
-        } else {
-            baseBlock = Material.BEDROCK;
-        }
-
-        // Áp dụng ore generation
-        if (baseBlock.equals(Material.STONE)) {
-            return oreGenerator.getOreAtPosition(x, y, z, baseBlock);
-        }
-
-        return baseBlock;
+    private Material stoneOrOre(int x, int y, int z) {
+        Material ore = oreGenerator.oreAt(x, y, z);
+        return ore != null ? ore : Material.STONE;
     }
 
     @Override
-    public boolean canSpawn(World world, int x, int z) {
+    public void generateBedrock(WorldInfo worldInfo, Random random,
+                                int chunkX, int chunkZ, ChunkData chunkData) {
+        int minY = worldInfo.getMinHeight();
+        for (int localX = 0; localX < 16; localX++) {
+            for (int localZ = 0; localZ < 16; localZ++) {
+                chunkData.setBlock(localX, minY, localZ, Material.BEDROCK);
+                if (random.nextInt(2) == 0) {
+                    chunkData.setBlock(localX, minY + 1, localZ, Material.BEDROCK);
+                }
+            }
+        }
+    }
+
+    @Override
+    public boolean shouldGenerateNoise() {
         return true;
+    }
+
+    @Override
+    public boolean shouldGenerateSurface() {
+        return false;
+    }
+
+    @Override
+    public boolean shouldGenerateBedrock() {
+        return true;
+    }
+
+    @Override
+    public boolean shouldGenerateCaves() {
+        return false;
+    }
+
+    @Override
+    public boolean shouldGenerateDecorations() {
+        return false;
+    }
+
+    @Override
+    public boolean shouldGenerateMobs() {
+        return true;
+    }
+
+    @Override
+    public boolean shouldGenerateStructures() {
+        return false;
+    }
+
+    @Override
+    public BiomeProvider getDefaultBiomeProvider(WorldInfo worldInfo) {
+        return new BiomeManager(worldInfo.getSeed());
+    }
+
+    @Override
+    public List<BlockPopulator> getDefaultPopulators(World world) {
+        return Collections.singletonList(new StructureGenerator(world.getSeed()));
+    }
+
+    @Override
+    public Location getFixedSpawnLocation(World world, Random random) {
+        ensureInitialized(world.getSeed());
+        int x = 0;
+        int z = 0;
+        int maxY = world.getMaxHeight();
+        int minY = world.getMinHeight();
+        for (int y = maxY - 1; y >= minY; y--) {
+            if (densityAt(x, y, z) > 0) {
+                return new Location(world, x + 0.5, y + 1.5, z + 0.5);
+            }
+        }
+        return new Location(world, x + 0.5, TerrainConfig.SEA_LEVEL + 1.5, z + 0.5);
     }
 }

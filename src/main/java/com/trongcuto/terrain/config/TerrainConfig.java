@@ -1,64 +1,118 @@
 package com.trongcuto.terrain.config;
 
 /**
- * Cấu hình chung cho Terrain Generator
- * Tất cả các tham số có thể được điều chỉnh qua commands
+ * Tunable parameters for the 3D density-field terrain generator.
+ *
+ * <p>All fields are mutable statics so they can be adjusted at runtime via the
+ * {@code /terrain config} command. Changes take effect for worlds generated
+ * afterwards (chunks already on disk keep the settings they were built with).</p>
  */
-public class TerrainConfig {
-    // Terrain generation parameters
-    public static double TERRAIN_SCALE = 0.015;        // Độ lớn địa hình chính
-    public static double TERRAIN_SCALE_2 = 0.005;      // Secondary terrain scale
-    public static double DETAIL_SCALE = 0.05;          // Chi tiết nhỏ
+public final class TerrainConfig {
 
-    // Cave parameters
-    public static double CAVE_SCALE = 0.08;            // Độ lớn hang động
-    public static double CAVE_THRESHOLD = 0.4;         // Ngưỡng hang động
-    public static int MIN_CAVE_HEIGHT = 15;            // Chiều cao tối thiểu hang động
-    public static int MAX_CAVE_HEIGHT = 100;           // Chiều cao tối đa hang động
-
-    // World parameters
-    public static int SEA_LEVEL = 63;                  // Mức nước
-    public static int MIN_HEIGHT = 40;                 // Chiều cao tối thiểu terrain
-    public static int MAX_HEIGHT = 140;                // Chiều cao tối đa terrain
-
-    // Biome parameters
-    public static double BIOME_SCALE = 0.01;           // Tỷ lệ biome
-
-    // Structure parameters
-    public static double STRUCTURE_RARITY = 0.7;       // Tần suất cấu trúc (cây, v.v.)
-
-    /**
-     * Reset tất cả về mặc định
-     */
-    public static void resetDefaults() {
-        TERRAIN_SCALE = 0.015;
-        TERRAIN_SCALE_2 = 0.005;
-        DETAIL_SCALE = 0.05;
-        CAVE_SCALE = 0.08;
-        CAVE_THRESHOLD = 0.4;
-        MIN_CAVE_HEIGHT = 15;
-        MAX_CAVE_HEIGHT = 100;
-        SEA_LEVEL = 63;
-        MIN_HEIGHT = 40;
-        MAX_HEIGHT = 140;
-        BIOME_SCALE = 0.01;
-        STRUCTURE_RARITY = 0.7;
+    private TerrainConfig() {
     }
 
+    // --- 3D density noise --------------------------------------------------
+
+    /** Horizontal frequency of the main density noise. Larger == smaller features. */
+    public static double HORIZONTAL_SCALE = 0.0125;
+
+    /** Vertical frequency of the main density noise. */
+    public static double VERTICAL_SCALE = 0.020;
+
     /**
-     * In ra tất cả cài đặt hiện tại
+     * How strongly altitude pulls the density toward "air". Larger values give
+     * flatter, lower terrain; smaller values give taller, more chaotic terrain
+     * with more overhangs and floating chunks.
      */
+    public static double SQUASH_FACTOR = 0.018;
+
+    /** Altitude the squash gradient pivots around (rough average ground level). */
+    public static int TERRAIN_CENTER = 80;
+
+    /** Weight of the ridged-multifractal contribution (sharp mountain ridges). */
+    public static double RIDGE_WEIGHT = 0.6;
+
+    // --- World layout ------------------------------------------------------
+
+    /** Water fills empty space at or below this Y. */
+    public static int SEA_LEVEL = 63;
+
+    /** Number of soil (dirt/sand) blocks below an exposed surface. */
+    public static int DIRT_DEPTH = 4;
+
+    // --- Ores --------------------------------------------------------------
+
+    /** Frequency of the ore-distribution noise. */
+    public static double ORE_SCALE = 0.1;
+
+    // --- Biomes ------------------------------------------------------------
+
+    /** Frequency of the biome (temperature/humidity) noise. */
+    public static double BIOME_SCALE = 0.0035;
+
+    // --- Trees -------------------------------------------------------------
+
+    /**
+     * Tree rarity threshold (0..1). Higher == fewer trees. A tree is attempted
+     * only where the structure noise exceeds this value.
+     */
+    public static double TREE_THRESHOLD = 0.82;
+
+    /**
+     * Reset every parameter to its default value.
+     */
+    public static void resetDefaults() {
+        HORIZONTAL_SCALE = 0.0125;
+        VERTICAL_SCALE = 0.020;
+        SQUASH_FACTOR = 0.018;
+        TERRAIN_CENTER = 80;
+        RIDGE_WEIGHT = 0.6;
+        SEA_LEVEL = 63;
+        DIRT_DEPTH = 4;
+        ORE_SCALE = 0.1;
+        BIOME_SCALE = 0.0035;
+        TREE_THRESHOLD = 0.82;
+    }
+
+    /** Names of every parameter accepted by {@link #applySetting(String, double)}. */
+    public static final String[] PARAMETERS = {
+            "horizontal-scale", "vertical-scale", "squash", "terrain-center",
+            "ridge-weight", "sea-level", "dirt-depth", "ore-scale",
+            "biome-scale", "tree-threshold"
+    };
+
+    /**
+     * Set a parameter by its hyphenated name.
+     *
+     * @return {@code true} if the name was recognised, {@code false} otherwise
+     */
+    public static boolean applySetting(String name, double value) {
+        switch (name.toLowerCase()) {
+            case "horizontal-scale" -> HORIZONTAL_SCALE = value;
+            case "vertical-scale" -> VERTICAL_SCALE = value;
+            case "squash" -> SQUASH_FACTOR = value;
+            case "terrain-center" -> TERRAIN_CENTER = (int) value;
+            case "ridge-weight" -> RIDGE_WEIGHT = value;
+            case "sea-level" -> SEA_LEVEL = (int) value;
+            case "dirt-depth" -> DIRT_DEPTH = (int) value;
+            case "ore-scale" -> ORE_SCALE = value;
+            case "biome-scale" -> BIOME_SCALE = value;
+            case "tree-threshold" -> TREE_THRESHOLD = value;
+            default -> {
+                return false;
+            }
+        }
+        return true;
+    }
+
     public static String getCurrentSettings() {
         return String.format(
-            "TERRAIN_SCALE: %.4f, " +
-            "CAVE_SCALE: %.4f, " +
-            "CAVE_THRESHOLD: %.4f, " +
-            "DETAIL_SCALE: %.4f, " +
-            "SEA_LEVEL: %d, " +
-            "MIN_HEIGHT: %d, " +
-            "MAX_HEIGHT: %d",
-            TERRAIN_SCALE, CAVE_SCALE, CAVE_THRESHOLD, DETAIL_SCALE,
-            SEA_LEVEL, MIN_HEIGHT, MAX_HEIGHT
-        );
+                "horizontal-scale=%.4f, vertical-scale=%.4f, squash=%.4f, "
+                        + "terrain-center=%d, ridge-weight=%.2f, sea-level=%d, "
+                        + "dirt-depth=%d, ore-scale=%.3f, biome-scale=%.4f, tree-threshold=%.2f",
+                HORIZONTAL_SCALE, VERTICAL_SCALE, SQUASH_FACTOR,
+                TERRAIN_CENTER, RIDGE_WEIGHT, SEA_LEVEL,
+                DIRT_DEPTH, ORE_SCALE, BIOME_SCALE, TREE_THRESHOLD);
     }
 }
