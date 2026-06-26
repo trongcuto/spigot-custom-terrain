@@ -31,12 +31,12 @@ import java.util.Random;
  */
 public final class CustomChunkGenerator extends ChunkGenerator {
 
-    private SimplexNoise density;
-    private SimplexNoise ridge;
-    private SimplexNoise surfaceVariation;
-    private OreGenerator oreGenerator;
-    private long initializedSeed;
-    private boolean initialized;
+    private volatile SimplexNoise density;
+    private volatile SimplexNoise ridge;
+    private volatile SimplexNoise surfaceVariation;
+    private volatile OreGenerator oreGenerator;
+    private volatile long initializedSeed;
+    private volatile boolean initialized;
 
     private synchronized void ensureInitialized(long seed) {
         if (initialized && seed == initializedSeed) {
@@ -160,7 +160,7 @@ public final class CustomChunkGenerator extends ChunkGenerator {
 
     @Override
     public boolean shouldGenerateNoise() {
-        return true;
+        return false;
     }
 
     @Override
@@ -170,7 +170,7 @@ public final class CustomChunkGenerator extends ChunkGenerator {
 
     @Override
     public boolean shouldGenerateBedrock() {
-        return true;
+        return false;
     }
 
     @Override
