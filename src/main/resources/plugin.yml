@@ -1,0 +1,20 @@
+name: CustomTerrainGenerator
+main: com.trongcuto.terrain.TerrainPlugin
+version: 1.0.0
+api-version: 1.20
+description: |
+  Plugin tạo địa hình Minecraft tùy chỉnh
+  sử dụng Simplex Noise 3D với ore generation,
+  biomes, trees, caves, và real-time configuration
+authors:
+  - trongcuto
+commands:
+  terrain:
+    description: Quản lý Custom Terrain Generator
+    usage: /terrain <create|config|list|reset>
+    aliases: [tg, terrain-gen]
+    permission: terrain.admin
+permissions:
+  terrain.admin:
+    description: Toàn quyền sử dụng terrain commands
+    default: op
