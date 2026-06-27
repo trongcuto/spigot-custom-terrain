@@ -1,37 +1,53 @@
 package com.trongcuto.terrain.config;
 
 /**
- * Tunable parameters for the 3D density-field terrain generator.
+ * Tunable parameters for the multi-noise terrain generator.
  *
  * <p>All fields are mutable statics so they can be adjusted at runtime via the
- * {@code /terrain config} command. Changes take effect for worlds generated
- * afterwards (chunks already on disk keep the settings they were built with).</p>
+ * {@code /terrain config} command. Changes take effect for worlds (and chunks)
+ * generated afterwards.</p>
  */
 public final class TerrainConfig {
 
     private TerrainConfig() {
     }
 
-    // --- 3D density noise --------------------------------------------------
+    // --- Macro shape (low-frequency control fields) ------------------------
 
-    /** Horizontal frequency of the main density noise. Larger == smaller features. */
-    public static double HORIZONTAL_SCALE = 0.0125;
+    /** Frequency of the continentalness field (overall land elevation). */
+    public static double CONTINENT_SCALE = 0.0011;
 
-    /** Vertical frequency of the main density noise. */
-    public static double VERTICAL_SCALE = 0.020;
+    /** Frequency of the relief field (how mountainous a region is). */
+    public static double RELIEF_SCALE = 0.0019;
 
-    /**
-     * How strongly altitude pulls the density toward "air". Larger values give
-     * flatter, lower terrain; smaller values give taller, more chaotic terrain
-     * with more overhangs and floating chunks.
-     */
-    public static double SQUASH_FACTOR = 0.018;
+    /** Frequency of the river field. */
+    public static double RIVER_SCALE = 0.0015;
 
-    /** Altitude the squash gradient pivots around (rough average ground level). */
-    public static int TERRAIN_CENTER = 80;
+    /** Frequency of the local 3D detail noise (overhangs / cliffs). */
+    public static double DETAIL_SCALE = 0.0175;
 
-    /** Weight of the ridged-multifractal contribution (sharp mountain ridges). */
-    public static double RIDGE_WEIGHT = 0.6;
+    /** Frequency of the temperature / humidity climate fields. */
+    public static double BIOME_SCALE = 0.0016;
+
+    // --- Heights -----------------------------------------------------------
+
+    /** Average height of flat land above {@link #SEA_LEVEL}. */
+    public static int BASE_LAND = 6;
+
+    /** Vertical range contributed by continentalness (lowlands vs highlands). */
+    public static double CONTINENT_AMPLITUDE = 16.0;
+
+    /** Extra height of mountain regions above the base land. */
+    public static double MOUNTAIN_AMPLITUDE = 95.0;
+
+    /** Overhang strength on flat terrain. */
+    public static double DETAIL_AMPLITUDE_BASE = 3.0;
+
+    /** Additional overhang strength on the most mountainous terrain. */
+    public static double DETAIL_AMPLITUDE_MOUNTAIN = 12.0;
+
+    /** River channel half-width (larger == wider rivers). */
+    public static double RIVER_WIDTH = 0.045;
 
     // --- World layout ------------------------------------------------------
 
@@ -41,39 +57,31 @@ public final class TerrainConfig {
     /** Number of soil (dirt/sand) blocks below an exposed surface. */
     public static int DIRT_DEPTH = 4;
 
-    // --- Biomes ------------------------------------------------------------
-
-    /** Frequency of the biome (temperature/humidity) noise. */
-    public static double BIOME_SCALE = 0.0035;
-
-    // --- Trees -------------------------------------------------------------
-
-    /**
-     * Tree rarity threshold (0..1). Higher == fewer trees. A tree is attempted
-     * only where the structure noise exceeds this value.
-     */
-    public static double TREE_THRESHOLD = 0.82;
-
     /**
      * Reset every parameter to its default value.
      */
     public static void resetDefaults() {
-        HORIZONTAL_SCALE = 0.0125;
-        VERTICAL_SCALE = 0.020;
-        SQUASH_FACTOR = 0.018;
-        TERRAIN_CENTER = 80;
-        RIDGE_WEIGHT = 0.6;
+        CONTINENT_SCALE = 0.0011;
+        RELIEF_SCALE = 0.0019;
+        RIVER_SCALE = 0.0015;
+        DETAIL_SCALE = 0.0175;
+        BIOME_SCALE = 0.0016;
+        BASE_LAND = 6;
+        CONTINENT_AMPLITUDE = 16.0;
+        MOUNTAIN_AMPLITUDE = 95.0;
+        DETAIL_AMPLITUDE_BASE = 3.0;
+        DETAIL_AMPLITUDE_MOUNTAIN = 12.0;
+        RIVER_WIDTH = 0.045;
         SEA_LEVEL = 63;
         DIRT_DEPTH = 4;
-        BIOME_SCALE = 0.0035;
-        TREE_THRESHOLD = 0.82;
     }
 
     /** Names of every parameter accepted by {@link #applySetting(String, double)}. */
     public static final String[] PARAMETERS = {
-            "horizontal-scale", "vertical-scale", "squash", "terrain-center",
-            "ridge-weight", "sea-level", "dirt-depth",
-            "biome-scale", "tree-threshold"
+            "continent-scale", "relief-scale", "river-scale", "detail-scale",
+            "biome-scale", "base-land", "continent-amplitude", "mountain-amplitude",
+            "detail-amplitude-base", "detail-amplitude-mountain", "river-width",
+            "sea-level", "dirt-depth"
     };
 
     /**
@@ -83,15 +91,19 @@ public final class TerrainConfig {
      */
     public static boolean applySetting(String name, double value) {
         switch (name.toLowerCase()) {
-            case "horizontal-scale" -> HORIZONTAL_SCALE = value;
-            case "vertical-scale" -> VERTICAL_SCALE = value;
-            case "squash" -> SQUASH_FACTOR = value;
-            case "terrain-center" -> TERRAIN_CENTER = (int) value;
-            case "ridge-weight" -> RIDGE_WEIGHT = value;
+            case "continent-scale" -> CONTINENT_SCALE = value;
+            case "relief-scale" -> RELIEF_SCALE = value;
+            case "river-scale" -> RIVER_SCALE = value;
+            case "detail-scale" -> DETAIL_SCALE = value;
+            case "biome-scale" -> BIOME_SCALE = value;
+            case "base-land" -> BASE_LAND = (int) value;
+            case "continent-amplitude" -> CONTINENT_AMPLITUDE = value;
+            case "mountain-amplitude" -> MOUNTAIN_AMPLITUDE = value;
+            case "detail-amplitude-base" -> DETAIL_AMPLITUDE_BASE = value;
+            case "detail-amplitude-mountain" -> DETAIL_AMPLITUDE_MOUNTAIN = value;
+            case "river-width" -> RIVER_WIDTH = value;
             case "sea-level" -> SEA_LEVEL = (int) value;
             case "dirt-depth" -> DIRT_DEPTH = (int) value;
-            case "biome-scale" -> BIOME_SCALE = value;
-            case "tree-threshold" -> TREE_THRESHOLD = value;
             default -> {
                 return false;
             }
@@ -101,11 +113,14 @@ public final class TerrainConfig {
 
     public static String getCurrentSettings() {
         return String.format(
-                "horizontal-scale=%.4f, vertical-scale=%.4f, squash=%.4f, "
-                        + "terrain-center=%d, ridge-weight=%.2f, sea-level=%d, "
-                        + "dirt-depth=%d, biome-scale=%.4f, tree-threshold=%.2f",
-                HORIZONTAL_SCALE, VERTICAL_SCALE, SQUASH_FACTOR,
-                TERRAIN_CENTER, RIDGE_WEIGHT, SEA_LEVEL,
-                DIRT_DEPTH, BIOME_SCALE, TREE_THRESHOLD);
+                "continent-scale=%.4f, relief-scale=%.4f, river-scale=%.4f, "
+                        + "detail-scale=%.4f, biome-scale=%.4f, base-land=%d, "
+                        + "continent-amplitude=%.1f, mountain-amplitude=%.1f, "
+                        + "detail-amplitude-base=%.1f, detail-amplitude-mountain=%.1f, "
+                        + "river-width=%.3f, sea-level=%d, dirt-depth=%d",
+                CONTINENT_SCALE, RELIEF_SCALE, RIVER_SCALE, DETAIL_SCALE, BIOME_SCALE,
+                BASE_LAND, CONTINENT_AMPLITUDE, MOUNTAIN_AMPLITUDE,
+                DETAIL_AMPLITUDE_BASE, DETAIL_AMPLITUDE_MOUNTAIN,
+                RIVER_WIDTH, SEA_LEVEL, DIRT_DEPTH);
     }
 }

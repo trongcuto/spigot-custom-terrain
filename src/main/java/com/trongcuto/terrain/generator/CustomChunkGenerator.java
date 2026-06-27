@@ -1,7 +1,6 @@
 package com.trongcuto.terrain.generator;
 
 import com.trongcuto.terrain.config.TerrainConfig;
-import com.trongcuto.terrain.noise.SimplexNoise;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.World;
@@ -14,67 +13,38 @@ import java.util.List;
 import java.util.Random;
 
 /**
- * Custom {@link ChunkGenerator} that builds terrain from a true 3D Simplex-noise
- * density field.
+ * Custom {@link ChunkGenerator} built on a multi-noise {@link TerrainShape}.
  *
- * <p>For every block position the generator evaluates 3D noise and subtracts a
- * vertical "squash" gradient that pushes density negative with altitude. Where
- * the density is positive the block is solid, otherwise it is air (or water
- * below sea level). Because the field is fully 3D — not a single height per
- * column — the terrain naturally produces overhangs, arches, floating crags and
- * caves that a 2D heightmap cannot.</p>
+ * <p>Each column gets a target surface height that varies by region: flat
+ * lowlands, rolling hills and tall, steep mountains, with rivers carved into the
+ * lowlands. A small amount of local 3D noise wobbles the surface into overhangs
+ * and cliffs (stronger on mountains) so the world keeps a 3D feel without
+ * breaking into floating islands.</p>
  *
- * <p>Ores ({@link OreGenerator}), biomes ({@link BiomeManager}) and trees
- * ({@link StructureGenerator}) are all layered on top of the same noise
- * pipeline.</p>
+ * <p>Surface blocks are biome-aware (sand deserts, snowy peaks, etc.). Vanilla
+ * biome decoration and caves are left enabled so each biome gets its authentic
+ * vegetation, trees, ores and cave systems from the shared {@link BiomeManager}
+ * climate.</p>
  */
 public final class CustomChunkGenerator extends ChunkGenerator {
 
-    private volatile SimplexNoise density;
-    private volatile SimplexNoise ridge;
-    private volatile SimplexNoise surfaceVariation;
+    private volatile TerrainShape shape;
     private volatile long initializedSeed;
     private volatile boolean initialized;
 
-    private synchronized void ensureInitialized(long seed) {
-        if (initialized && seed == initializedSeed) {
-            return;
+    private synchronized TerrainShape ensureInitialized(long seed) {
+        if (!initialized || seed != initializedSeed) {
+            shape = new TerrainShape(seed);
+            initializedSeed = seed;
+            initialized = true;
         }
-        density = new SimplexNoise(seed);
-        ridge = new SimplexNoise(seed ^ 0x9E3779B97F4A7C15L);
-        surfaceVariation = new SimplexNoise(seed * 31L + 17L);
-        initializedSeed = seed;
-        initialized = true;
-    }
-
-    /**
-     * 3D density at a world position. Positive values are solid.
-     */
-    private double densityAt(int x, int y, int z) {
-        double base = density.octaves(
-                x * TerrainConfig.HORIZONTAL_SCALE,
-                y * TerrainConfig.VERTICAL_SCALE,
-                z * TerrainConfig.HORIZONTAL_SCALE,
-                4, 0.5, 2.0);
-
-        double ridges = ridge.ridged(
-                x * TerrainConfig.HORIZONTAL_SCALE * 0.5,
-                y * TerrainConfig.VERTICAL_SCALE * 0.5,
-                z * TerrainConfig.HORIZONTAL_SCALE * 0.5,
-                3, 0.5, 2.2);
-
-        double value = base + (ridges - 0.5) * TerrainConfig.RIDGE_WEIGHT;
-
-        // Altitude gradient gives a recognisable ground/sky split.
-        value -= (y - TerrainConfig.TERRAIN_CENTER) * TerrainConfig.SQUASH_FACTOR;
-
-        return value;
+        return shape;
     }
 
     @Override
     public void generateNoise(WorldInfo worldInfo, Random random,
                               int chunkX, int chunkZ, ChunkData chunkData) {
-        ensureInitialized(worldInfo.getSeed());
+        TerrainShape terrain = ensureInitialized(worldInfo.getSeed());
 
         int minY = worldInfo.getMinHeight();
         int maxY = worldInfo.getMaxHeight();
@@ -84,19 +54,21 @@ public final class CustomChunkGenerator extends ChunkGenerator {
                 int worldX = (chunkX << 4) + localX;
                 int worldZ = (chunkZ << 4) + localZ;
 
-                // Scan top-down so we always know how far below the exposed
-                // surface a solid block sits, even under 3D overhangs. The top
-                // of the world counts as open air.
+                TerrainShape.Column col = terrain.columnAt(worldX, worldZ);
+                double overhangAmp = TerrainConfig.DETAIL_AMPLITUDE_BASE
+                        + col.ruggedness() * TerrainConfig.DETAIL_AMPLITUDE_MOUNTAIN;
+
                 boolean airAbove = true;
                 int depth = 0;
 
                 for (int y = maxY - 1; y >= minY; y--) {
-                    boolean solid = densityAt(worldX, y, worldZ) > 0;
+                    double density = (col.height() - y)
+                            + terrain.detail(worldX, y, worldZ) * overhangAmp;
 
-                    if (solid) {
+                    if (density > 0) {
                         depth = airAbove ? 0 : depth + 1;
-                        Material material = pickSolidMaterial(worldX, y, worldZ, depth);
-                        chunkData.setBlock(localX, y, localZ, material);
+                        chunkData.setBlock(localX, y, localZ,
+                                pickSolidMaterial(col, worldX, y, worldZ, depth));
                         airAbove = false;
                     } else {
                         if (y <= TerrainConfig.SEA_LEVEL) {
@@ -111,10 +83,14 @@ public final class CustomChunkGenerator extends ChunkGenerator {
 
     /**
      * Chooses the block for a solid voxel. {@code depth} is the number of solid
-     * blocks between this voxel and the air/water directly above it (0 == the
-     * exposed surface block).
+     * blocks between this voxel and the air/water directly above (0 == exposed
+     * surface). Surface material is biome-aware so the terrain reads correctly
+     * even before vanilla decoration runs.
      */
-    private Material pickSolidMaterial(int x, int y, int z, int depth) {
+    private Material pickSolidMaterial(TerrainShape.Column col, int x, int y, int z, int depth) {
+        boolean desert = col.temperature() > 0.45 && col.humidity() < -0.1;
+        boolean cold = col.temperature() < -0.35;
+
         // Beach / sea bed near the water line.
         if (depth <= TerrainConfig.DIRT_DEPTH && y <= TerrainConfig.SEA_LEVEL + 2
                 && y >= TerrainConfig.SEA_LEVEL - 4) {
@@ -125,15 +101,24 @@ public final class CustomChunkGenerator extends ChunkGenerator {
             if (y < TerrainConfig.SEA_LEVEL) {
                 return Material.GRAVEL;
             }
-            double v = surfaceVariation.noise(x * 0.05, 0.0, z * 0.05);
-            return v > 0.65 ? Material.COARSE_DIRT : Material.GRASS_BLOCK;
+            if (desert) {
+                return Material.SAND;
+            }
+            // Bare rock on the steepest, highest peaks.
+            if (col.ruggedness() > 0.55 && y > TerrainConfig.SEA_LEVEL + 80) {
+                return Material.STONE;
+            }
+            if (cold && y > TerrainConfig.SEA_LEVEL + 55) {
+                return Material.SNOW_BLOCK;
+            }
+            return Material.GRASS_BLOCK;
         }
 
         if (depth <= TerrainConfig.DIRT_DEPTH) {
-            return Material.DIRT;
+            return desert ? Material.SANDSTONE : Material.DIRT;
         }
 
-        // Ores are carved in afterwards by the OreGenerator populator.
+        // Ores are added by vanilla biome decoration.
         return Material.STONE;
     }
 
@@ -168,12 +153,12 @@ public final class CustomChunkGenerator extends ChunkGenerator {
 
     @Override
     public boolean shouldGenerateCaves() {
-        return false;
+        return true;
     }
 
     @Override
     public boolean shouldGenerateDecorations() {
-        return false;
+        return true;
     }
 
     @Override
@@ -193,23 +178,15 @@ public final class CustomChunkGenerator extends ChunkGenerator {
 
     @Override
     public List<BlockPopulator> getDefaultPopulators(World world) {
-        return List.of(
-                new OreGenerator(world.getSeed()),
-                new StructureGenerator(world.getSeed()));
+        return List.of();
     }
 
     @Override
     public Location getFixedSpawnLocation(World world, Random random) {
-        ensureInitialized(world.getSeed());
-        int x = 0;
-        int z = 0;
-        int maxY = world.getMaxHeight();
-        int minY = world.getMinHeight();
-        for (int y = maxY - 1; y >= minY; y--) {
-            if (densityAt(x, y, z) > 0) {
-                return new Location(world, x + 0.5, y + 1.5, z + 0.5);
-            }
-        }
-        return new Location(world, x + 0.5, TerrainConfig.SEA_LEVEL + 1.5, z + 0.5);
+        TerrainShape terrain = ensureInitialized(world.getSeed());
+        TerrainShape.Column col = terrain.columnAt(0, 0);
+        int y = (int) Math.ceil(col.height());
+        y = Math.max(y, TerrainConfig.SEA_LEVEL);
+        return new Location(world, 0.5, y + 1.5, 0.5);
     }
 }
