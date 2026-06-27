@@ -1,7 +1,7 @@
 name: CustomTerrainGenerator
 main: com.trongcuto.terrain.TerrainPlugin
 version: 1.0.0
-api-version: 1.20
+api-version: '1.21'
 description: |
   Plugin tạo địa hình Minecraft tùy chỉnh
   sử dụng Simplex Noise 3D với ore generation,
