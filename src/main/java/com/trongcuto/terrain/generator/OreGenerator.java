@@ -1,53 +1,93 @@
 package com.trongcuto.terrain.generator;
 
-import com.trongcuto.terrain.config.TerrainConfig;
-import com.trongcuto.terrain.noise.SimplexNoise;
 import org.bukkit.Material;
+import org.bukkit.generator.BlockPopulator;
+import org.bukkit.generator.LimitedRegion;
+import org.bukkit.generator.WorldInfo;
+
+import java.util.Random;
 
 /**
- * Noise-driven ore placement. Ore type is chosen by altitude band (tuned for
- * the 1.21 world height range of -64..320) and a dedicated 3D noise so that
- * ores form connected veins rather than random speckles.
+ * Vein-based ore placement. Runs as a {@link BlockPopulator} after the base
+ * terrain exists, so it can only ever convert existing {@link Material#STONE}
+ * into ore. Each ore type spawns a vanilla-like number of small veins per chunk
+ * within a fixed altitude band, instead of being driven by the terrain noise
+ * (which produced huge ore masses that "swallowed" the mountains).
  */
-public final class OreGenerator {
+public final class OreGenerator extends BlockPopulator {
 
-    private final SimplexNoise oreNoise;
+    /** One configurable ore: material, altitude band, veins per chunk, blob size. */
+    private record Ore(Material material, int minY, int maxY, int veinsPerChunk, int veinSize) {
+    }
+
+    private static final Ore[] ORES = {
+            new Ore(Material.COAL_ORE, 0, 190, 20, 12),
+            new Ore(Material.COPPER_ORE, -16, 112, 8, 10),
+            new Ore(Material.IRON_ORE, -24, 72, 12, 8),
+            new Ore(Material.LAPIS_ORE, -32, 32, 2, 6),
+            new Ore(Material.GOLD_ORE, -64, 30, 3, 8),
+            new Ore(Material.REDSTONE_ORE, -64, 16, 8, 7),
+            new Ore(Material.DIAMOND_ORE, -64, 14, 1, 4),
+    };
+
+    private final long seed;
 
     public OreGenerator(long seed) {
-        this.oreNoise = new SimplexNoise(seed + 100);
+        this.seed = seed;
+    }
+
+    @Override
+    public void populate(WorldInfo worldInfo, Random random, int chunkX, int chunkZ,
+                         LimitedRegion region) {
+        // Deterministic per-chunk RNG so a given seed always yields the same ores.
+        Random rng = new Random(seed
+                ^ (chunkX * 341873128712L)
+                ^ (chunkZ * 132897987541L));
+
+        int worldMinY = worldInfo.getMinHeight();
+        int worldMaxY = worldInfo.getMaxHeight();
+        int originX = chunkX << 4;
+        int originZ = chunkZ << 4;
+
+        for (Ore ore : ORES) {
+            int loY = Math.max(ore.minY(), worldMinY);
+            int hiY = Math.min(ore.maxY(), worldMaxY - 1);
+            if (loY > hiY) {
+                continue;
+            }
+            for (int v = 0; v < ore.veinsPerChunk(); v++) {
+                int x = originX + rng.nextInt(16);
+                int z = originZ + rng.nextInt(16);
+                int y = loY + rng.nextInt(hiY - loY + 1);
+                placeVein(region, rng, ore.material(), x, y, z, ore.veinSize(), worldMaxY);
+            }
+        }
     }
 
     /**
-     * Possibly replace a stone block with an ore.
-     *
-     * @return the ore material, or {@link Material#STONE} when no ore applies
+     * Grow a small blob of ore from an origin via a short random walk, only ever
+     * replacing stone.
      */
-    public Material oreAt(int x, int y, int z) {
-        double n = Math.abs(oreNoise.noise(
-                x * TerrainConfig.ORE_SCALE,
-                y * (TerrainConfig.ORE_SCALE * 0.8),
-                z * TerrainConfig.ORE_SCALE));
-
-        if (y < -48) {
-            if (n < 0.20) return Material.DIAMOND_ORE;
-        } else if (y < -16) {
-            if (n < 0.15) return Material.DIAMOND_ORE;
-            if (n < 0.35) return Material.GOLD_ORE;
-            if (n < 0.50) return Material.REDSTONE_ORE;
-        } else if (y < 24) {
-            if (n < 0.10) return Material.DIAMOND_ORE;
-            if (n < 0.28) return Material.GOLD_ORE;
-            if (n < 0.48) return Material.IRON_ORE;
-            if (n < 0.62) return Material.COPPER_ORE;
-        } else if (y < 80) {
-            if (n < 0.20) return Material.IRON_ORE;
-            if (n < 0.34) return Material.LAPIS_ORE;
-            if (n < 0.52) return Material.COPPER_ORE;
-            if (n < 0.68) return Material.COAL_ORE;
-        } else {
-            if (n < 0.30) return Material.COAL_ORE;
+    private void placeVein(LimitedRegion region, Random rng, Material material,
+                           int x, int y, int z, int size, int worldMaxY) {
+        int cx = x;
+        int cy = y;
+        int cz = z;
+        for (int i = 0; i < size; i++) {
+            replaceStone(region, cx, cy, cz, material, worldMaxY);
+            cx += rng.nextInt(3) - 1;
+            cy += rng.nextInt(3) - 1;
+            cz += rng.nextInt(3) - 1;
         }
+    }
 
-        return Material.STONE;
+    private void replaceStone(LimitedRegion region, int x, int y, int z,
+                              Material material, int worldMaxY) {
+        if (y >= worldMaxY || !region.isInRegion(x, y, z)) {
+            return;
+        }
+        if (region.getType(x, y, z) == Material.STONE) {
+            region.setType(x, y, z, material);
+        }
     }
 }

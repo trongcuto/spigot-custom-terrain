@@ -10,7 +10,6 @@ import org.bukkit.generator.BlockPopulator;
 import org.bukkit.generator.ChunkGenerator;
 import org.bukkit.generator.WorldInfo;
 
-import java.util.Collections;
 import java.util.List;
 import java.util.Random;
 
@@ -34,7 +33,6 @@ public final class CustomChunkGenerator extends ChunkGenerator {
     private volatile SimplexNoise density;
     private volatile SimplexNoise ridge;
     private volatile SimplexNoise surfaceVariation;
-    private volatile OreGenerator oreGenerator;
     private volatile long initializedSeed;
     private volatile boolean initialized;
 
@@ -45,7 +43,6 @@ public final class CustomChunkGenerator extends ChunkGenerator {
         density = new SimplexNoise(seed);
         ridge = new SimplexNoise(seed ^ 0x9E3779B97F4A7C15L);
         surfaceVariation = new SimplexNoise(seed * 31L + 17L);
-        oreGenerator = new OreGenerator(seed);
         initializedSeed = seed;
         initialized = true;
     }
@@ -136,12 +133,8 @@ public final class CustomChunkGenerator extends ChunkGenerator {
             return Material.DIRT;
         }
 
-        return stoneOrOre(x, y, z);
-    }
-
-    private Material stoneOrOre(int x, int y, int z) {
-        Material ore = oreGenerator.oreAt(x, y, z);
-        return ore != null ? ore : Material.STONE;
+        // Ores are carved in afterwards by the OreGenerator populator.
+        return Material.STONE;
     }
 
     @Override
@@ -200,7 +193,9 @@ public final class CustomChunkGenerator extends ChunkGenerator {
 
     @Override
     public List<BlockPopulator> getDefaultPopulators(World world) {
-        return Collections.singletonList(new StructureGenerator(world.getSeed()));
+        return List.of(
+                new OreGenerator(world.getSeed()),
+                new StructureGenerator(world.getSeed()));
     }
 
     @Override

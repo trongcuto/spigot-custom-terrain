@@ -41,11 +41,6 @@ public final class TerrainConfig {
     /** Number of soil (dirt/sand) blocks below an exposed surface. */
     public static int DIRT_DEPTH = 4;
 
-    // --- Ores --------------------------------------------------------------
-
-    /** Frequency of the ore-distribution noise. */
-    public static double ORE_SCALE = 0.1;
-
     // --- Biomes ------------------------------------------------------------
 
     /** Frequency of the biome (temperature/humidity) noise. */
@@ -70,7 +65,6 @@ public final class TerrainConfig {
         RIDGE_WEIGHT = 0.6;
         SEA_LEVEL = 63;
         DIRT_DEPTH = 4;
-        ORE_SCALE = 0.1;
         BIOME_SCALE = 0.0035;
         TREE_THRESHOLD = 0.82;
     }
@@ -78,7 +72,7 @@ public final class TerrainConfig {
     /** Names of every parameter accepted by {@link #applySetting(String, double)}. */
     public static final String[] PARAMETERS = {
             "horizontal-scale", "vertical-scale", "squash", "terrain-center",
-            "ridge-weight", "sea-level", "dirt-depth", "ore-scale",
+            "ridge-weight", "sea-level", "dirt-depth",
             "biome-scale", "tree-threshold"
     };
 
@@ -96,7 +90,6 @@ public final class TerrainConfig {
             case "ridge-weight" -> RIDGE_WEIGHT = value;
             case "sea-level" -> SEA_LEVEL = (int) value;
             case "dirt-depth" -> DIRT_DEPTH = (int) value;
-            case "ore-scale" -> ORE_SCALE = value;
             case "biome-scale" -> BIOME_SCALE = value;
             case "tree-threshold" -> TREE_THRESHOLD = value;
             default -> {
@@ -110,9 +103,9 @@ public final class TerrainConfig {
         return String.format(
                 "horizontal-scale=%.4f, vertical-scale=%.4f, squash=%.4f, "
                         + "terrain-center=%d, ridge-weight=%.2f, sea-level=%d, "
-                        + "dirt-depth=%d, ore-scale=%.3f, biome-scale=%.4f, tree-threshold=%.2f",
+                        + "dirt-depth=%d, biome-scale=%.4f, tree-threshold=%.2f",
                 HORIZONTAL_SCALE, VERTICAL_SCALE, SQUASH_FACTOR,
                 TERRAIN_CENTER, RIDGE_WEIGHT, SEA_LEVEL,
-                DIRT_DEPTH, ORE_SCALE, BIOME_SCALE, TREE_THRESHOLD);
+                DIRT_DEPTH, BIOME_SCALE, TREE_THRESHOLD);
     }
 }
